@@ -1,0 +1,44 @@
+# ===== ВСЕ ПРИЗНАКИ ИЗ IMPLICIT + ДОПОЛНИТЕЛЬНЫЕ =====
+
+explicit_additional_features = {
+    # ===== ПРИЗНАКИ РЕЙТИНГОВ =====
+    
+    # рейтинги товара
+    'item_avg_rating': 'numerical',
+    'item_rating_std': 'numerical',             # разброс оценок
+    'item_num_ratings': 'numerical',
+    'item_rating_5_pct': 'numerical',           # % пятерок
+    'item_rating_1_pct': 'numerical',           # % единиц
+    'item_controversy_score': 'numerical',      # поляризация оценок
+    'item_avg_rating_30d': 'numerical',         # свежие рейтинги
+    
+    # рейтинги пользователя
+    'user_avg_rating': 'numerical',             # какие оценки обычно ставит
+    'user_rating_std': 'numerical',
+    'user_num_ratings': 'numerical',
+    'user_is_harsh_critic': 'binary',           # avg_rating < 3
+    'user_is_generous': 'binary',               # avg_rating > 4
+    
+    # согласованность пользователя
+    'user_rating_consistency': 'numerical',     # насколько стабильны оценки
+    'user_rating_trend': 'numerical',           # растут или падают оценки со временем
+    
+    # взаимодействие user-item
+    'user_previous_rating': 'numerical',        # если пользователь уже оценивал
+    'user_rating_category_avg': 'numerical',    # средний рейтинг по категории от user
+    'user_rating_brand_avg': 'numerical',
+    
+    # отклонения от среднего
+    'rating_deviation_from_item_avg': 'numerical',
+    'rating_deviation_from_user_avg': 'numerical',
+    
+    # признаки отзывов
+    'user_avg_review_length': 'numerical',
+    'user_helpfulness_score': 'numerical',      # % "полезных" отзывов
+    'item_avg_review_length': 'numerical',
+    'item_review_sentiment': 'numerical',       # из NLP анализа
+    
+    # временные паттерны рейтингов
+    'rating_recency': 'numerical',              # вес свежих оценок
+    'rating_trend_7d_vs_30d': 'numerical',      # изменение рейтинга
+}
