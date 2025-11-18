@@ -1,0 +1,413 @@
+import numpy as np
+import pandas as pd
+import scipy.sparse as sp
+from implicit.als import ALS
+from typing import List, Union, Tuple, Optional, Dict
+
+
+class ALSRecommender:
+    """
+    Обёртка над implicit.ALS с удобным интерфейсом.
+    
+    Пример:
+        model = ALSRecommender(factors=64, iterations=20)
+        model.fit(user_ids=[1,1,2,3], item_ids=[10,20,10,30], ratings=[5,3,4,5])
+        recs = model.predict(user_ids=1, N=5)
+    """
+    
+    def __init__(
+        self,
+        factors: int = 64,
+        regularization: float = 0.01,
+        iterations: int = 15,
+        alpha: float = 1.0,
+        random_state: int = 42,
+        use_gpu: bool = False
+    ):
+        """
+        :param factors: размерность латентных факторов
+        :param regularization: L2 регуляризация
+        :param iterations: количество итераций ALS
+        :param alpha: вес для confidence (для implicit feedback), итоговый вес = 1 + alpha * rating
+        :param random_state: seed для воспроизводимости
+        :param use_gpu: использовать GPU (требует cupy)
+        """
+        self.model = ALS(
+            factors=factors,
+            regularization=regularization,
+            iterations=iterations,
+            alpha=alpha,
+            random_state=random_state,
+            use_gpu=use_gpu,
+            calculate_training_loss=True
+        )
+        
+        # маппинги между оригинальными ID и внутренними индексами
+        self.user_id_to_index = {}
+        self.item_id_to_index = {}
+        self.index_to_user_id = {}
+        self.index_to_item_id = {}
+        
+        # матрицы
+        self.user_item_matrix = None
+        self.item_user_matrix = None
+        
+        self.is_fitted = False
+        
+    
+    def fit(
+        self, 
+        user_ids: List[int], 
+        item_ids: List[int], 
+        ratings: Optional[List[float]] = None,
+        show_progress: bool = True
+    ):
+        """
+        обучение модели.
+        
+        :param user_ids: список ID пользователей
+        :param item_ids: список ID товаров
+        :param ratings: список рейтингов/весов, если None, то все = 1.0
+        :param show_progress: показывать прогресс обучения
+        """
+        # проверки
+        if len(user_ids) != len(item_ids):
+            raise ValueError("Длины user_ids и item_ids должны совпадать")
+        
+        if ratings is None:
+            ratings = np.ones(len(user_ids))
+        else:
+            if len(ratings) != len(user_ids):
+                raise ValueError("Длина ratings должна совпадать с user_ids")
+            ratings = np.array(ratings)
+        
+        # создаем маппинги ID -> индекс
+        unique_users = sorted(set(user_ids))
+        unique_items = sorted(set(item_ids))
+        
+        self.user_id_to_index = {uid: idx for idx, uid in enumerate(unique_users)}
+        self.item_id_to_index = {iid: idx for idx, iid in enumerate(unique_items)}
+        self.index_to_user_id = {idx: uid for uid, idx in self.user_id_to_index.items()}
+        self.index_to_item_id = {idx: iid for iid, idx in self.item_id_to_index.items()}
+        
+        # конвертируем ID в индексы
+        user_indices = [self.user_id_to_index[uid] for uid in user_ids]
+        item_indices = [self.item_id_to_index[iid] for iid in item_ids]
+        
+        # создаем разреженную матрицу user × item
+        n_users = len(unique_users)
+        n_items = len(unique_items)
+        
+        self.user_item_matrix = sp.csr_matrix(
+            (ratings, (user_indices, item_indices)),
+            shape=(n_users, n_items)
+        )
+        
+        # транспонируем для ALS (нужна item × user)
+        self.item_user_matrix = self.user_item_matrix.T.tocsr()
+        
+        # обучение
+        self.model.fit(self.item_user_matrix, show_progress=show_progress)
+        self.is_fitted = True
+        
+        print(f"✅ обучение завершено:")
+        print(f"   пользователей: {n_users}")
+        print(f"   товаров: {n_items}")
+        print(f"   взаимодействий: {len(user_ids)}")
+        print(f"   плотность матрицы: {len(user_ids) / (n_users * n_items):.4%}")
+        
+        return self
+    
+    
+    def predict(
+        self, 
+        user_ids: Union[int, List[int]], 
+        N: int = 10,
+        filter_already_liked: bool = True,
+        return_scores: bool = False
+    ) -> Dict[int, Union[List[int], Tuple[List[int], List[float]]]]:
+        """
+        получить рекомендации для пользователя(ей).
+        
+        :param user_ids: ID пользователя или список ID
+        :param N: количество рекомендаций
+        :param filter_already_liked: исключить уже просмотренные товары
+        :param return_scores: возвращать ли скоры вместе с товарами
+        :return: словарь {user_id: [item_ids]} если return_scores=False,
+                 {user_id: ([item_ids], [scores])} если return_scores=True
+        """
+        if not self.is_fitted:
+            raise ValueError("Модель не обучена! Вызовите fit() сначала.")
+        
+        # приводим к списку
+        if isinstance(user_ids, (int, np.integer)):
+            user_ids = [user_ids]
+        
+        results = {}
+        
+        for user_id in user_ids:
+            # проверяем, есть ли пользователь в обучающей выборке
+            if user_id not in self.user_id_to_index:
+                print(f"⚠️  user {user_id} не найден в обучающих данных. возвращаем популярные товары.")
+                # возвращаем топ популярных товаров
+                item_popularity = np.array(self.user_item_matrix.sum(axis=0)).flatten()
+                top_items_idx = np.argsort(-item_popularity)[:N]
+                top_items = [self.index_to_item_id[idx] for idx in top_items_idx]
+                top_scores = item_popularity[top_items_idx]
+                
+                if return_scores:
+                    results[user_id] = (top_items, top_scores.tolist())
+                else:
+                    results[user_id] = top_items
+                continue
+            
+            user_idx = self.user_id_to_index[user_id]
+            
+            # получаем рекомендации
+            recs = self.model.recommend(
+                userid=user_idx,
+                user_items=self.user_item_matrix[user_idx],
+                N=N,
+                filter_already_liked_items=filter_already_liked
+            )
+            
+            # конвертируем индексы обратно в оригинальные ID
+            item_indices, scores = recs
+            item_ids_result = [self.index_to_item_id[idx] for idx in item_indices]
+            
+            if return_scores:
+                results[user_id] = (item_ids_result, scores.tolist())
+            else:
+                results[user_id] = item_ids_result
+        
+        return results
+    
+    
+    def similar_items(
+        self, 
+        item_id: int, 
+        N: int = 10
+    ) -> Tuple[List[int], List[float]]:
+        """
+        найти похожие товары.
+        
+        :param item_id: ID товара
+        :param N: количество похожих товаров
+        :return: кортеж (item_ids, scores) - списки похожих товаров и их скоров
+        """
+        if not self.is_fitted:
+            raise ValueError("Модель не обучена!")
+        
+        if item_id not in self.item_id_to_index:
+            raise ValueError(f"Item {item_id} не найден")
+        
+        item_idx = self.item_id_to_index[item_id]
+        
+        similar = self.model.similar_items(itemid=item_idx, N=N+1)  # +1 т.к. сам товар включен
+        item_indices, scores = similar
+        
+        # убираем сам товар и конвертируем в ID
+        result_items = []
+        result_scores = []
+        
+        for idx, score in zip(item_indices, scores):
+            if idx == item_idx:
+                continue
+            result_items.append(self.index_to_item_id[idx])
+            result_scores.append(score)
+            if len(result_items) >= N:
+                break
+        
+        return result_items, result_scores
+    
+    
+    def similar_users(
+        self, 
+        user_id: int, 
+        N: int = 10
+    ) -> Tuple[List[int], List[float]]:
+        """
+        найти похожих пользователей.
+        
+        :param user_id: ID пользователя
+        :param N: количество похожих пользователей
+        :return: кортеж (user_ids, scores) - списки похожих пользователей и их скоров
+        """
+        if not self.is_fitted:
+            raise ValueError("Модель не обучена!")
+        
+        if user_id not in self.user_id_to_index:
+            raise ValueError(f"User {user_id} не найден")
+        
+        user_idx = self.user_id_to_index[user_id]
+        
+        similar = self.model.similar_users(userid=user_idx, N=N+1)
+        user_indices, scores = similar
+        
+        # убираем самого пользователя
+        result_users = []
+        result_scores = []
+        
+        for idx, score in zip(user_indices, scores):
+            if idx == user_idx:
+                continue
+            result_users.append(self.index_to_user_id[idx])
+            result_scores.append(score)
+            if len(result_users) >= N:
+                break
+        
+        return result_users, result_scores
+    
+    
+    def get_user_items(self, user_id: int) -> Tuple[List[int], List[float]]:
+        """
+        получить историю взаимодействий пользователя.
+        
+        :param user_id: ID пользователя
+        :return: кортеж (item_ids, ratings) - товары и рейтинги пользователя
+        """
+        if not self.is_fitted:
+            raise ValueError("Модель не обучена!")
+        
+        if user_id not in self.user_id_to_index:
+            return [], []
+        
+        user_idx = self.user_id_to_index[user_id]
+        user_row = self.user_item_matrix[user_idx]
+        
+        # получаем ненулевые элементы
+        item_indices = user_row.nonzero()[1]
+        ratings = user_row.data
+        
+        item_ids = [self.index_to_item_id[idx] for idx in item_indices]
+        
+        return item_ids, ratings.tolist()
+    
+    
+    def predict_for_new_user(
+        self,
+        item_ids: List[int],
+        ratings: Optional[List[float]] = None,
+        N: int = 10
+    ) -> Tuple[List[int], List[float]]:
+        """
+        рекомендации для нового пользователя (холодный старт).
+        
+        :param item_ids: список товаров, с которыми взаимодействовал новый пользователь
+        :param ratings: рейтинги для этих товаров
+        :param N: количество рекомендаций
+        :return: кортеж (recommended_items, scores)
+        """
+        if not self.is_fitted:
+            raise ValueError("Модель не обучена!")
+        
+        if ratings is None:
+            ratings = np.ones(len(item_ids))
+        
+        # конвертируем ID в индексы (только известные товары)
+        item_indices = []
+        valid_ratings = []
+        
+        for iid, rating in zip(item_ids, ratings):
+            if iid in self.item_id_to_index:
+                item_indices.append(self.item_id_to_index[iid])
+                valid_ratings.append(rating)
+        
+        if len(item_indices) == 0:
+            print("⚠️  ни один товар не найден в обучающих данных")
+            return [], []
+        
+        # создаем вектор для нового пользователя
+        n_items = len(self.item_id_to_index)
+        new_user_vector = sp.csr_matrix(
+            (valid_ratings, ([0] * len(item_indices), item_indices)),
+            shape=(1, n_items)
+        )
+        
+        # получаем рекомендации
+        recs = self.model.recommend(
+            userid=0,  # фиктивный ID
+            user_items=new_user_vector[0],
+            N=N,
+            recalculate_user=True  # важно!
+        )
+        
+        item_indices_result, scores = recs
+        item_ids_result = [self.index_to_item_id[idx] for idx in item_indices_result]
+        
+        return item_ids_result, scores.tolist()
+
+
+# ===== ПРИМЕР ИСПОЛЬЗОВАНИЯ =====
+
+if __name__ == "__main__":
+    
+    # 1. создание данных
+    print("=" * 60)
+    print("ПРИМЕР ИСПОЛЬЗОВАНИЯ ALSRecommender")
+    print("=" * 60)
+    
+    # данные: пользователи смотрят фильмы
+    user_ids =  [101, 101, 101, 102, 102, 102, 103, 103, 104, 104, 104]
+    item_ids =  [501, 502, 503, 502, 504, 505, 501, 503, 502, 503, 505]
+    ratings =   [5.0, 3.0, 4.0, 4.0, 5.0, 2.0, 5.0, 3.0, 4.0, 5.0, 3.0]
+    
+    # 2. создание и обучение модели
+    print("\n📚 обучение модели...")
+    model = ALSRecommender(
+        factors=32,
+        regularization=0.01,
+        iterations=20,
+        alpha=1.0
+    )
+    
+    model.fit(user_ids, item_ids, ratings)
+    
+    # 3. рекомендации для одного пользователя (словарь по умолчанию)
+    print("\n🎯 рекомендации для user 101:")
+    recs = model.predict(user_ids=101, N=3)
+    print(f"   {recs}")
+    
+    # 4. рекомендации со скорами
+    print("\n🎯 рекомендации для user 101 со скорами:")
+    recs_with_scores = model.predict(user_ids=101, N=3, return_scores=True)
+    for user_id, (items, scores) in recs_with_scores.items():
+        print(f"   user {user_id}:")
+        for item, score in zip(items, scores):
+            print(f"     фильм {item}: score = {score:.4f}")
+    
+    # 5. история пользователя
+    print("\n📜 история user 101:")
+    hist_items, hist_ratings = model.get_user_items(101)
+    for item, rating in zip(hist_items, hist_ratings):
+        print(f"   фильм {item}: rating = {rating}")
+    
+    # 6. рекомендации для нескольких пользователей
+    print("\n🎯 батч рекомендации для users [101, 102]:")
+    batch_recs = model.predict(user_ids=[101, 102], N=2)
+    for user_id, items in batch_recs.items():
+        print(f"   user {user_id}: {items}")
+    
+    # 7. похожие фильмы
+    print("\n🎬 похожие на фильм 502:")
+    sim_items, sim_scores = model.similar_items(item_id=502, N=3)
+    for item, score in zip(sim_items, sim_scores):
+        print(f"   фильм {item}: similarity = {score:.4f}")
+    
+    # 8. похожие пользователи
+    print("\n👥 похожие на user 101:")
+    sim_users, sim_scores = model.similar_users(user_id=101, N=2)
+    for user, score in zip(sim_users, sim_scores):
+        print(f"   user {user}: similarity = {score:.4f}")
+    
+    # 9. холодный старт
+    print("\n🆕 новый пользователь (смотрел 501, 503):")
+    new_recs, new_scores = model.predict_for_new_user(
+        item_ids=[501, 503],
+        ratings=[5.0, 4.0],
+        N=3
+    )
+    for item, score in zip(new_recs, new_scores):
+        print(f"   фильм {item}: score = {score:.4f}")
+    
+    print("\n" + "=" * 60)
