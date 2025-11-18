@@ -1,0 +1,107 @@
+import pandas as pd
+import numpy as np
+from catboost import CatBoostRanker, Pool
+from sklearn.model_selection import train_test_split
+
+# ===== ПОДГОТОВКА ДАННЫХ =====
+# Пример: ранжирование товаров для пользователей
+data = pd.DataFrame({
+    'user_id': [1,1,1, 2,2,2, 3,3,3],
+    'item_id': [101,102,103, 101,102,103, 101,102,103],
+    'price': [100,200,150, 100,200,150, 100,200,150],
+    'rating': [4.5,3.2,4.8, 2.1,4.9,3.5, 4.0,2.5,4.2],
+    'category': ['A','B','A', 'A','B','A', 'A','B','A'],
+    # Целевая метка - релевантность (0-нерелевантен, 1-релевантен, 2-очень релевантен)
+    'relevance': [2,0,1, 0,2,1, 1,0,2]
+})
+
+# Фичи и таргет
+features = ['price', 'rating', 'category']
+X = data[features]
+y = data['relevance']
+group_id = data['user_id']  # ВАЖНО: группировка по запросам/пользователям
+
+# Разделение данных
+X_train, X_test, y_train, y_test, g_train, g_test = train_test_split(
+    X, y, group_id, test_size=0.3, random_state=42
+)
+
+# ===== СОЗДАНИЕ POOL =====
+train_pool = Pool(
+    data=X_train,
+    label=y_train,
+    group_id=g_train,
+    cat_features=['category']  # категориальные признаки
+)
+
+test_pool = Pool(
+    data=X_test,
+    label=y_test,
+    group_id=g_test,
+    cat_features=['category']
+)
+
+# ===== ОБУЧЕНИЕ =====
+model = CatBoostRanker(
+    iterations=1000,
+    learning_rate=0.03,
+    depth=6,
+    
+    # Функции потерь для ранжирования:
+    loss_function='YetiRank',  # Рекомендуется (градиентный бустинг)
+    # loss_function='PairLogit',  # Попарное сравнение
+    # loss_function='QueryRMSE',  # RMSE внутри группы
+    
+    # Метрики
+    custom_metric=['NDCG', 'PrecisionAt:top=5', 'RecallAt:top=5'],
+    
+    # Регуляризация
+    l2_leaf_reg=3,
+    random_strength=1,
+    
+    # Остановка
+    early_stopping_rounds=50,
+    
+    verbose=100,
+    random_seed=42
+)
+
+# Обучение с валидацией
+model.fit(
+    train_pool,
+    eval_set=test_pool,
+    plot=True  # график обучения
+)
+
+# ===== ПРЕДСКАЗАНИЕ =====
+# Получить скоры (чем выше, тем релевантнее)
+predictions = model.predict(test_pool)
+
+# Для каждого пользователя отранжировать товары
+test_data = X_test.copy()
+test_data['score'] = predictions
+test_data['group'] = g_test.values
+
+# Топ-5 товаров для каждого пользователя
+for user in test_data['group'].unique():
+    user_recs = test_data[test_data['group'] == user].nlargest(5, 'score')
+    print(f"\nUser {user} recommendations:")
+    print(user_recs[['price', 'rating', 'score']])
+
+# ===== ВАЖНЫЕ МЕТРИКИ =====
+from catboost import metrics
+
+# NDCG (Normalized Discounted Cumulative Gain)
+ndcg = model.eval_metrics(test_pool, metrics=['NDCG'])
+print(f"NDCG: {ndcg['NDCG'][-1]}")
+
+# Feature importance
+importance = model.get_feature_importance(train_pool)
+feature_names = X_train.columns
+for name, imp in zip(feature_names, importance):
+    print(f"{name}: {imp:.4f}")
+
+# ===== СОХРАНЕНИЕ/ЗАГРУЗКА =====
+model.save_model('ranker_model.cbm')
+loaded_model = CatBoostRanker()
+loaded_model.load_model('ranker_model.cbm')
