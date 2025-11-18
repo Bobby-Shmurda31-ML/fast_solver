@@ -1,0 +1,131 @@
+# ===== 1. ПРИЗНАКИ ТОВАРА (item features) =====
+
+item_features = {
+    # базовые характеристики
+    'item_id': 'categorical',
+    'category': 'categorical',
+    'subcategory': 'categorical',
+    'brand': 'categorical',
+    'price': 'numerical',
+    'price_segment': 'categorical',  # low, medium, high
+    'discount': 'numerical',         # процент скидки
+    'is_on_sale': 'binary',
+    
+    # популярность товара
+    'item_popularity_global': 'numerical',      # общее кол-во взаимодействий
+    'item_popularity_7d': 'numerical',          # популярность за 7 дней
+    'item_popularity_30d': 'numerical',
+    'item_ctr': 'numerical',                    # click-through rate
+    'item_conversion_rate': 'numerical',        # покупки / просмотры
+    
+    # временные признаки товара
+    'days_since_first_interaction': 'numerical',
+    'days_since_last_interaction': 'numerical',
+    'item_age_days': 'numerical',               # сколько дней в каталоге
+    'is_new_item': 'binary',                    # новинка (< 30 дней)
+    
+    # контент товара
+    'avg_rating': 'numerical',
+    'num_reviews': 'numerical',
+    'num_images': 'numerical',
+    'has_video': 'binary',
+    'description_length': 'numerical',
+    
+    # статистика по категории
+    'category_popularity': 'numerical',
+    'category_avg_price': 'numerical',
+    'price_vs_category_avg': 'numerical',       # price / category_avg_price
+}
+
+# ===== 2. ПРИЗНАКИ ПОЛЬЗОВАТЕЛЯ (user features) =====
+
+user_features = {
+    # демография
+    'user_id': 'categorical',
+    'age': 'numerical',
+    'age_group': 'categorical',  # 18-25, 26-35...
+    'gender': 'categorical',
+    'city': 'categorical',
+    'region': 'categorical',
+    
+    # активность пользователя
+    'user_total_interactions': 'numerical',     # всего взаимодействий
+    'user_interactions_7d': 'numerical',
+    'user_interactions_30d': 'numerical',
+    'user_avg_session_length': 'numerical',
+    'user_days_since_registration': 'numerical',
+    'user_days_since_last_activity': 'numerical',
+    
+    # поведенческие признаки
+    'user_avg_price': 'numerical',              # средняя цена покупок
+    'user_total_spent': 'numerical',
+    'user_num_purchases': 'numerical',
+    'user_purchase_rate': 'numerical',          # покупки / просмотры
+    'user_return_rate': 'numerical',            # возвраты / покупки
+    
+    # предпочтения
+    'user_favorite_category': 'categorical',
+    'user_favorite_brand': 'categorical',
+    'user_num_unique_categories': 'numerical',  # разнообразие интересов
+    'user_category_diversity': 'numerical',     # энтропия категорий
+}
+
+# ===== 3. ПРИЗНАКИ ВЗАИМОДЕЙСТВИЯ USER-ITEM =====
+
+interaction_features = {
+    # история взаимодействий
+    'user_viewed_item': 'binary',               # пользователь видел этот товар
+    'user_clicked_item': 'binary',
+    'user_added_to_cart': 'binary',
+    'user_purchased_item': 'binary',
+    'num_user_item_interactions': 'numerical',  # сколько раз взаимодействовал
+    'days_since_last_interaction': 'numerical',
+    
+    # взаимодействия с похожими товарами
+    'user_viewed_same_category': 'numerical',   # сколько товаров из категории смотрел
+    'user_purchased_same_category': 'numerical',
+    'user_viewed_same_brand': 'numerical',
+    'user_purchased_same_brand': 'numerical',
+    
+    # ценовое соответствие
+    'price_vs_user_avg': 'numerical',           # price / user_avg_price
+    'is_in_user_price_range': 'binary',
+    
+    # персонализированная популярность
+    'item_popularity_in_user_segment': 'numerical',  # популярность среди похожих users
+    'item_popularity_in_user_region': 'numerical',
+}
+
+# ===== 4. КОНТЕКСТНЫЕ ПРИЗНАКИ =====
+
+context_features = {
+    # временной контекст
+    'hour': 'categorical',
+    'day_of_week': 'categorical',
+    'is_weekend': 'binary',
+    'is_holiday': 'binary',
+    'season': 'categorical',
+    'time_of_day': 'categorical',  # morning, afternoon, evening, night
+    
+    # сессионные признаки
+    'session_position': 'numerical',            # позиция в сессии
+    'session_length': 'numerical',
+    'items_viewed_in_session': 'numerical',
+    
+    # позиция в рекомендациях
+    'recommendation_source': 'categorical',     # homepage, search, similar_items
+    'page_number': 'numerical',
+}
+
+# ===== 5. ПРИЗНАКИ СХОЖЕСТИ =====
+
+similarity_features = {
+    # collaborative filtering признаки
+    'als_score': 'numerical',                   # скор из ALS модели
+    'item2vec_similarity': 'numerical',         # косинусная близость эмбеддингов
+    'user_item_dot_product': 'numerical',       # user_emb · item_emb
+    
+    # статистическая схожесть
+    'jaccard_similarity': 'numerical',          # с товарами пользователя
+    'cosine_similarity_users': 'numerical',     # с похожими пользователями
+}
